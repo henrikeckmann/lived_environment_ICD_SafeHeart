@@ -1,0 +1,178 @@
+---
+title: "descriptives"
+output: html_document
+---
+
+```{r, results="hide", message=FALSE, warning=FALSE}
+rm(list=ls())
+library(gtsummary)
+library(flextable)
+source("data_wrangling/create_analysis_df.R")
+```
+
+
+```{r}
+
+analysis_df_factors = analysis_df_factors |> 
+  filter(bmi < 45)
+
+descr_table = tbl_summary(
+  analysis_df_factors |> 
+  mutate(
+    smoking = if_else(smoking == "0", "Unknown", smoking)
+  ),
+  by = country_code,
+  include = c(
+    # sex,
+    # day_of_week,
+    # avg_acc_AGSA,
+    # IG_AGSA,
+    weekend,
+    holiday,
+    weekend_or_holiday,
+    # age,
+    # bmi,
+    # smoking,
+    # secondary_prevention_yn,
+    # comorbidities_n,
+    # medications_n,
+    # cardiomyopathy,
+    # myocardialinfarction,
+    daily_temperature_2m_max_oe,
+    daily_precipitation_hours,
+    daily_sunshine_duration_hours_oe,
+    daily_wind_speed_10m_max,
+    event_icd
+  ),
+  type = list(
+    # comorbidities_n ~ "continuous",
+    # medications_n ~ "continuous",
+    weekend ~ "dichotomous",
+    holiday ~ "dichotomous",
+    weekend_or_holiday ~ "dichotomous",
+    # cardiomyopathy ~ "dichotomous",
+    # myocardialinfarction ~ "dichotomous",
+    event_icd ~ "dichotomous"
+  ),
+  value = list(
+    weekend ~ "1",
+    holiday ~ "1",
+    weekend_or_holiday ~ "1", 
+    # cardiomyopathy ~ "1",
+    # myocardialinfarction ~ "1",
+    event_icd ~ "1"
+  ),
+  digits = all_continuous() ~ 2
+) |> 
+  add_overall()
+
+write_csv(as.data.frame(descr_table), "analysis/descriptives/descr_table_day.csv")
+
+# print(descr_table)
+```
+
+
+
+```{r}
+
+analysis_df_factors_participant = analysis_df_factors |> 
+  mutate(
+    smoking = if_else(smoking == "0", "Unknown", smoking),
+  ) |> 
+  group_by(Participant) |> 
+  mutate(
+    has_event = any(event_icd == "1")
+  ) |> 
+  distinct(Participant, .keep_all = TRUE)
+
+descr_table_participant = tbl_summary(
+  analysis_df_factors_participant,
+  by = country_code,
+  include = c(
+    sex,
+    # # day_of_week,
+    # avg_acc_AGSA,
+    # IG_AGSA,
+    # weekend,
+    # holiday,
+    age,
+    bmi,
+    bmi_factor,
+    smoking,
+    secondary_prevention_yn,
+    comorbidities_n,
+    medications_n,
+    cardiomyopathy,
+    myocardialinfarction,
+    # daily_temperature_2m_max_oe,
+    # daily_precipitation_hours,
+    # daily_precipitation_hours,
+    # daily_sunshine_duration_hours_oe,
+    # daily_wind_speed_10m_max,
+    # event_icd,
+    has_event
+  ),
+  type = list(
+    comorbidities_n ~ "continuous",
+    medications_n ~ "continuous",
+    # weekend ~ "dichotomous",
+    # holiday ~ "dichotomous",
+    cardiomyopathy ~ "dichotomous",
+    myocardialinfarction ~ "dichotomous"
+    # event_icd ~ "dichotomous"
+    # has_event ~ "dichotomous"
+  ),
+  value = list(
+    # weekend ~ "1",
+    # holiday ~ "1",
+    cardiomyopathy ~ "1",
+    myocardialinfarction ~ "1"
+    # event_icd ~ "1"
+    # has_event ~ "1"
+  )
+) |> 
+  add_overall()
+
+write_csv(as.data.frame(descr_table_participant), "analysis/descriptives/descr_table_participant.csv")
+
+# print(descr_table_participant)
+```
+
+
+
+```{r}
+
+analysis_df_factors_participant_pa = analysis_df_factors |> 
+  mutate(
+    smoking = if_else(smoking == "0", "Unknown", smoking),
+  ) |> 
+  group_by(Participant) |> 
+  mutate(
+    has_event = any(event_icd == "1")
+  ) |> 
+  summarise(across(starts_with("IG_") | starts_with("avg_acc_"), ~ mean(.x)), country_code = first(country_code))
+
+descr_table_participant_pa = tbl_summary(
+  analysis_df_factors_participant_pa,
+  by = country_code,
+  include = c(
+    avg_acc_AGSA,
+    avg_acc_ENMO,
+    avg_acc_MAD,
+    avg_acc_MIMS,
+    avg_acc_CountsVM,
+    IG_AGSA,
+    IG_ENMO,
+    IG_MAD,
+    IG_MIMS,
+    IG_CountsVM,
+  ),
+  digits = list(starts_with("IG") ~ 3, avg_acc_MIMS ~ 3)
+) |> 
+  add_overall()
+
+write_csv(as.data.frame(descr_table_participant_pa), "analysis/descriptives/descr_table_participant_pa.csv")
+
+# print(descr_table_participant_pa)
+```
+

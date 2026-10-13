@@ -1,0 +1,316 @@
+---
+title: "Modelling PA"
+output:
+  html_document:
+---
+
+
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.dpi = 300
+)
+```
+
+
+
+### Imports
+```{r, results="hide", message=FALSE, warning=FALSE}
+rm(list = ls())
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(car)
+# library(lme4)
+library(lmerTest)
+library(lattice)
+library(ggplotify)
+source("data_wrangling/create_analysis_df.R")
+```
+
+
+```{r}
+
+df = analysis_df_factors |>
+  filter(bmi < 45) |>  # filtering two outlier participants
+  mutate( # not scaling comorbidities (0-11), medications (0-8) or precipitation hours
+    across(
+      c(age, bmi),
+      ~ scale(.x)
+      ),
+    across(
+      starts_with("daily_") & !contains("cloud_cover") & !contains("precipitation_hours"),
+      ~ scale(.x)
+      ),
+    daily_cloud_cover_mean = daily_cloud_cover_mean / 20,
+    daily_precipitation_hours = daily_precipitation_hours / 4
+    ) |>
+  pivot_longer(
+    starts_with("avg_acc_") | starts_with("IG_") & !contains("rsq")
+  )
+
+
+```
+
+### modelling
+
+
+```{r}
+
+metric = "avg_acc_AGSA"
+
+model_df = df |>
+  filter(name == metric) |>
+  mutate(week_number_participant = factor(Participant:week_number_participant)) # nest week number within participant
+
+```
+
+
+```{r}
+
+form = value ~ (1 | Participant) + (1 | week_number_participant) +
+  (season_winter + season_spring) * country_code * daily_temperature_2m_max_oe +
+  weekend_or_holiday +
+  age +
+  sex +
+  bmi_factor +
+  secondary_prevention_yn +
+  comorbidities_n +
+  medications_n +
+  cardiomyopathy +
+  myocardialinfarction +
+  daily_precipitation_hours +
+  daily_sunshine_duration_hours_oe +
+  daily_wind_speed_10m_max +
+  # daily_cloud_cover_mean +
+  event_icd +
+  event_level_before +
+  event_level_after
+  # FileMeasurementDeviceID +
+  # FileMeasurementFrequency
+
+model = lmer(formula = form, data = model_df)
+
+saveRDS(model, paste0("analysis/models/model_", metric, ".rds"))
+
+summary(model)
+# vif(model)
+# anova(model)
+```
+
+
+
+#### confidence intervals
+
+```{r}
+confidence_intervals = confint(model, oldNames = FALSE)
+confidence_intervals
+```
+
+### prediction and simulation
+#### season
+
+```{r}
+
+pred_df = expand_grid(
+  Participant = NA,
+  day_of_year = 1:365,
+  country_code = c("DK", "NL"),
+  daily_temperature_2m_max_oe = 0,
+  weekend_or_holiday = "0",
+  age = 0,
+  sex = "Male",
+  bmi_factor = "normal",
+  secondary_prevention_yn = "Yes",
+  comorbidities_n = 3,
+  medications_n = 4,
+  cardiomyopathy = "1",
+  myocardialinfarction = "0",
+  daily_precipitation_hours = 0.5,
+  daily_sunshine_duration_hours_oe = 0,
+  daily_wind_speed_10m_max = 0,
+  event_icd = "0",
+  event_level_before = "0",
+  event_level_after = "0",
+  week_number_participant = NA
+  ) |> 
+  mutate(
+    season_winter = cos(2 * pi * day_of_year / 365.24),
+    season_spring = sin(2 * pi * day_of_year / 365.24)
+  )
+
+predictions = predict(model, pred_df, re.form = NA, allow.new.levels = TRUE, se.fit = TRUE)
+pred_df$predicted_value = predictions$fit
+pred_df$hci = predictions$fit + 1.96 * predictions$se.fit
+pred_df$lci = predictions$fit - 1.96 * predictions$se.fit
+  
+```
+
+```{r, fig.width=8, fig.height=8}
+
+ylims = c(
+  mean(pred_df$predicted_value) - 2.5 * mean(pred_df$hci - pred_df$lci),
+  mean(pred_df$predicted_value) + 2.5 * mean(pred_df$hci - pred_df$lci)
+)
+
+fig1 = pred_df |> 
+  ggplot() +
+  geom_ribbon(aes(x = day_of_year, ymin = lci, ymax = hci, fill = country_code), alpha = .3) +
+  geom_line(aes(day_of_year, predicted_value, colour = country_code))  +
+  scale_x_continuous(breaks = seq(1, 365, by = 91)) +
+  coord_cartesian(ylim = ylims) +
+  labs(x = "Day of the year", y = metric, colour = "Country", fill = "Country", title = paste0(metric, " through the year")) +
+  theme_classic() +
+  theme(
+    panel.grid.major = element_line(colour = "grey")
+    )
+
+fig1
+
+ggsave(
+  paste0("analysis/viz/fig1_", metric, ".png"),
+  plot = fig1,
+  width = 8,
+  height = 7,
+  units = "in",
+  dpi = 300
+)
+
+```
+
+
+
+#### temp max
+```{r}
+
+pred_df = expand_grid(
+  Participant = NA,
+  day_of_year = c(31, 122, 213, 304),
+  country_code = c("DK", "NL"),
+  daily_temperature_2m_max_oe = seq(-3, 3, by = 0.1),
+  weekend_or_holiday = "0",
+  age = 0,
+  sex = "Male",
+  bmi_factor = "normal",
+  secondary_prevention_yn = "Yes",
+  comorbidities_n = 3,
+  medications_n = 4,
+  cardiomyopathy = "1",
+  myocardialinfarction = "0",
+  daily_precipitation_hours = 0.5,
+  daily_sunshine_duration_hours_oe = 0,
+  daily_wind_speed_10m_max = 0,
+  event_icd = "0",
+  event_level_before = "0",
+  event_level_after = "0",
+  week_number_participant = NA
+  ) |> 
+  mutate(
+    season_winter = cos(2 * pi * day_of_year / 365.24),
+    season_spring = sin(2 * pi * day_of_year / 365.24)
+  )
+
+predictions = predict(model, pred_df, re.form = NA, allow.new.levels = TRUE, se.fit = TRUE)
+pred_df$predicted_value = predictions$fit
+pred_df$hci = predictions$fit + 1.96 * predictions$se.fit
+pred_df$lci = predictions$fit - 1.96 * predictions$se.fit
+  
+```
+
+
+
+```{r, message=FALSE, fig.width=12, fig.height=9}
+
+xlims = c(-2, 2)
+
+f1 = pred_df |> 
+  filter(day_of_year == 31) |> 
+  ggplot() + 
+  geom_ribbon(
+    aes(x = daily_temperature_2m_max_oe, ymin = lci, ymax = hci, fill = country_code), alpha = .3) +
+  geom_line(
+    aes(daily_temperature_2m_max_oe, predicted_value, colour = country_code)
+    ) +
+  # scale_y_continuous(breaks = c(-3.5, -3.0, -2.5)) +
+  # coord_cartesian(ylim = c(-3.5, -2.5)) +
+  coord_cartesian(xlim = xlims, ylim = ylims) +
+  labs(x = NULL, y = metric, title = paste0("e) ", metric, ", Winter")) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    panel.grid.major = element_line(colour = "grey")
+  ) 
+
+f2 = pred_df |> 
+  filter(day_of_year == 122) |> 
+  ggplot() + 
+  geom_ribbon(
+    aes(x = daily_temperature_2m_max_oe, ymin = lci, ymax = hci, fill = country_code), alpha = .3) +
+  geom_line(
+    aes(daily_temperature_2m_max_oe, predicted_value, colour = country_code)
+    ) +
+  # scale_y_continuous(breaks = c(-3.5, -3.0, -2.5)) +
+  # coord_cartesian(ylim = c(-3.5, -2.5)) +
+  coord_cartesian(xlim = xlims, ylim = ylims) +
+  labs(x = NULL, y = NULL, colour = "Country", fill = "Country", title = paste0("f) ", metric, ", Spring")) +
+  theme_classic() +
+  theme(
+    panel.grid.major = element_line(colour = "grey")
+  ) 
+
+f3 = pred_df |> 
+  filter(day_of_year == 213) |> 
+  ggplot() + 
+  geom_ribbon(
+    aes(x = daily_temperature_2m_max_oe, ymin = lci, ymax = hci, fill = country_code), alpha = .3) +
+  geom_line(
+    aes(daily_temperature_2m_max_oe, predicted_value, colour = country_code)
+    ) +
+  # scale_y_continuous(breaks = c(-3.5, -3.0, -2.5)) +
+  # coord_cartesian(ylim = c(-3.5, -2.5)) +
+  coord_cartesian(xlim = xlims, ylim = ylims) +
+  labs(x = "Temperature over expected (SDs from mean)", y = metric, title = paste0("g) ", metric, ", Summer")) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    panel.grid.major = element_line(colour = "grey")
+  )
+
+f4 = pred_df |> 
+  filter(day_of_year == 304) |> 
+  ggplot() + 
+  geom_ribbon(
+    aes(x = daily_temperature_2m_max_oe, ymin = lci, ymax = hci, fill = country_code), alpha = .3) +
+  geom_line(
+    aes(daily_temperature_2m_max_oe, predicted_value, colour = country_code)
+    ) +
+  # scale_y_continuous(breaks = c(-3.5, -3.0, -2.5)) +
+  # coord_cartesian(ylim = c(-3.5, -2.5)) +
+  coord_cartesian(xlim = xlims, ylim = ylims) +
+  labs(x = "Temperature over expected (SDs from mean)", y = NULL, title = paste0("h) ", metric, ", Autumn")) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    panel.grid.major = element_line(colour = "grey")
+  ) 
+
+fig2 = (f1 + f2) / (f3 + f4)
+
+fig2
+
+# ggsave(
+#   paste0("analysis/viz/fig2_", metric, ".png"),
+#   plot = fig2,
+#   width = 8,
+#   height = 7,
+#   units = "in",
+#   dpi = 300
+# )
+
+```
+
+
+
+
